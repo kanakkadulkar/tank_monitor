@@ -1,0 +1,117 @@
+:root {
+  /* High-End Slate Theme */
+  --bg: #0f172a;           /* Deep Navy/Slate */
+  --surface: #1e293b;      /* Lighter Slate for Cards */
+  --surface2: #334155;     /* Highlight Slate */
+  --border: rgba(255, 255, 255, 0.08);
+  --border2: rgba(255, 255, 255, 0.2);
+  --text: #cbd5e1;
+  --text-h: #f8fafc;
+  --muted: #94a3b8;
+  
+  /* Vibrant Chart Colors */
+  --cyan: #22d3ee;
+  --amber: #fbbf24;
+  --red: #f87171;
+  --green: #4ade80;
+  --blue: #60a5fa;
+  --accent: #a78bfa;
+
+  --font-display: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+body {
+  margin: 0;
+  background: radial-gradient(circle at top left, #1e293b, #0f172a);
+  color: var(--text);
+  font-family: var(--font-display);
+  min-height: 100vh;
+}
+
+#root {
+  max-width: 1300px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+/* --- Styled Navigation Tabs --- */
+.nav-container {
+  display: inline-flex;
+  gap: 0.5rem;
+  margin-bottom: 2.5rem;
+  background: rgba(30, 41, 59, 0.7);
+  padding: 0.4rem;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  backdrop-filter: blur(10px);
+}
+
+.nav-button {
+  padding: 0.7rem 1.8rem;
+  border: none;
+  border-radius: 10px;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  background: transparent;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.nav-button.active {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 4px 15px rgba(167, 139, 250, 0.4);
+}
+
+.nav-button:hover:not(.active) {
+  color: var(--text-h);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* --- Card Polish --- */
+.card-style {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 1.5rem;
+  transition: transform 0.2s ease;
+}
+
+.card-style:hover {
+  border-color: var(--border2);
+}
+/* Add these to your existing index.css */
+
+:root {
+  /* ... existing variables ... */
+  --red-dim: rgba(239, 68, 68, 0.1);
+}
+
+/* Glassmorphism for the KPI cards */
+.card-style {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.5rem;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+}
+
+/* KPI Stat Styling */
+.stat-value {
+  font-family: var(--font-mono);
+  font-size: 2.2rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* Table Polish */
+table tr:hover {
+  background: rgba(255, 255, 255, 0.03) !important;
+}
