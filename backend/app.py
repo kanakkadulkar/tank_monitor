@@ -12,7 +12,7 @@ import pandas as pd
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from apscheduler.schedulers.background import BackgroundScheduler
-
+import sqlite3
 warnings.filterwarnings("ignore")
 
 # ── Path setup ──────────────────────────────────────────────────────────────
@@ -25,6 +25,24 @@ from services.anomaly import fit_anomaly_params, AnomalyDetector
 
 app = Flask(__name__)
 CORS(app, origins="*")
+
+
+DB_PATH = os.path.join(BASE, "data", "live_sensor.db")
+
+def init_live_db():
+    """Create a fresh database for live readings only."""
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
+    # This table stores every reading received from the ESP32
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS live_readings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            distance REAL
+        )
+    """)
+    conn.commit()
+    conn.close()
 
 # ── In-memory buffer ─────────────────────────────────────────────────────────
 BUFFER_SIZE = 300
@@ -102,21 +120,19 @@ scheduler.start()
 
 @app.route("/collect", methods=["POST"])
 def collect():
-    """Receive sensor reading from ESP32."""
     data = request.get_json(silent=True) or {}
     try:
-        # Accepts 'distance', 'distance_mm' (from your ESP32), or 'value'
-        distance = float(data.get("distance_mm") or data.get("distance") or data.get("value") or 0)
+        distance = float(data.get("distance_mm") or data.get("distance") or 0)
     except (TypeError, ValueError):
         return jsonify({"error": "invalid distance"}), 400
 
-    ts = data.get("timestamp") or datetime.now().isoformat()
-    point = {"timestamp": ts, "distance": distance}
-
-    with _lock:
-        _buffer.append(point)
-        buf_copy = list(_buffer)
-        detector = _cache["detector"]
+    ts = datetime.now().isoformat()
+    
+    # NEW: Save every live reading to the SQLite database
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("INSERT INTO live_readings (timestamp, distance) VALUES (?, ?)", (ts, distance))
+    conn.commit()
+    conn.close()
 
     # Live ROC calculation
     recent_vals = [p["distance"] for p in buf_copy[-30:]]
@@ -169,22 +185,36 @@ def latest():
 
 @app.route("/analysis")
 def analysis():
+    """Return full ML analysis based on LIVE SQLite data."""
     with _lock:
         cached = _cache["analysis"]
         last   = _cache["last_update"]
-        buf    = list(_buffer)
 
-    stale = (last is None) or (datetime.now() - datetime.fromisoformat(last) > timedelta(minutes=5))
-    if stale and len(buf) >= 20:
-        df = pd.DataFrame(buf)
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
-        result = analyze_tank_data(df)
-        with _lock:
-            _cache["analysis"]    = _serialise(result)
-            _cache["last_update"] = datetime.now().isoformat()
-            if result.get("_detector"): _cache["detector"] = result["_detector"]
-        return jsonify(_cache["analysis"])
-    return jsonify(cached or {"error": "analysis not ready"})
+    # Re-run if cache is stale (>5 min) or empty
+    stale = (last is None) or \
+            (datetime.now() - datetime.fromisoformat(last) > timedelta(minutes=5))
+
+    if stale:
+        # 1. Connect to your NEW live database
+        conn = sqlite3.connect(DB_PATH) 
+        # 2. Pull all readings received from the ESP32
+        df = pd.read_sql_query("SELECT timestamp, distance FROM live_readings", conn)
+        conn.close()
+
+        if len(df) >= 20:
+            df["timestamp"] = pd.to_datetime(df["timestamp"])
+            # 3. Run the advanced pipeline on ONLY your live data
+            result = analyze_tank_data(df) 
+            
+            with _lock:
+                _cache["analysis"]    = _serialise(result)
+                _cache["last_update"] = datetime.now().isoformat()
+                if result.get("_detector"):
+                    _cache["detector"] = result["_detector"]
+            return jsonify(_cache["analysis"])
+
+    return jsonify(cached or {"error": "Insufficient live data for AI analysis (need 20+ readings)"})
+
 
 @app.route("/forecast")
 def forecast():
@@ -213,5 +243,5 @@ def health():
 
 if __name__ == "__main__":
     _load_and_train()
-    print("[app] Flask server starting on http://localhost:5000")
-    app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
+    print("[app] Flask server starting on http://localhost:5001")
+    app.run(host="0.0.0.0", port=5001, debug=False, use_reloader=False)
