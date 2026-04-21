@@ -1,10 +1,10 @@
 import React, { useEffect, useState, useRef } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, ReferenceLine,
+  ResponsiveContainer,
 } from 'recharts';
 import { Card, Stat, SectionTitle, Badge, Spinner } from '../components/ui';
-import { getBuffer, getHourly, getAnalysis } from '../services/api';
+import { getBuffer, getHourly, getAnalysis, getLatest, getFlowSummary } from '../services/api';
 import { format } from 'date-fns';
 
 const TANK_H = 240;
@@ -95,6 +95,29 @@ function StateChip({ state }) {
   return <Badge type={m.type}>{m.icon} {m.label}</Badge>;
 }
 
+/* ── Tier badge ──────────────────────────────────────────────────────────── */
+function TierBadge({ tier }) {
+  const map = {
+    log:       { type: 'info',    label: 'LOG' },
+    dashboard: { type: 'warning', label: 'DASHBOARD' },
+    alert:     { type: 'warning', label: 'ALERT' },
+    critical:  { type: 'danger',  label: 'CRITICAL' },
+  };
+  const m = map[tier] || map.log;
+  return <Badge type={m.type}>{m.label}</Badge>;
+}
+
+/* ── Flow direction badge ────────────────────────────────────────────────── */
+function FlowBadge({ direction }) {
+  const map = {
+    draining: { type: 'danger',  icon: '↓', label: 'Draining' },
+    filling:  { type: 'success', icon: '↑', label: 'Filling' },
+    stable:   { type: 'info',    icon: '→', label: 'Stable' },
+  };
+  const m = map[direction] || map.stable;
+  return <Badge type={m.type}>{m.icon} {m.label}</Badge>;
+}
+
 /* ── Custom tooltip ───────────────────────────────────────────────────────── */
 function ChartTip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
@@ -115,18 +138,22 @@ function ChartTip({ active, payload, label }) {
 }
 
 /* ── Main Dashboard ───────────────────────────────────────────────────────── */
-export default function Dashboard({ live }) {
+export default function Dashboard() {
   const [buffer,   setBuffer]  = useState([]);
   const [hourly,   setHourly]  = useState([]);
   const [analysis, setAna]     = useState(null);
+  const [live,     setLive]    = useState(null);
+  const [flow,     setFlow]    = useState(null);
   const [alerts,   setAlerts]  = useState([]);
   const timerRef = useRef(null);
 
-  /* Poll buffer + hourly every 3s */
+  /* Poll buffer + hourly + latest + flow every 3s */
   useEffect(() => {
     const fetchLive = async () => {
       try { setBuffer(await getBuffer()); }  catch {}
       try { setHourly(await getHourly()); }  catch {}
+      try { setLive(await getLatest()); }    catch {}
+      try { setFlow(await getFlowSummary()); } catch {}
     };
     fetchLive();
     timerRef.current = setInterval(fetchLive, 3000);
@@ -158,6 +185,13 @@ export default function Dashboard({ live }) {
   const lastAno = live?.last_anomaly;
   const insights= analysis?.insights ?? [];
 
+  // Flow data
+  const flowDir  = flow?.flow_direction ?? 'stable';
+  const flowRate = flow?.current_flow_rate ?? 0;
+  const tte      = flow?.est_time_to_empty;
+  const ttf      = flow?.est_time_to_full;
+  const flowTrend= flow?.trend ?? 'stable';
+
   return (
     <div>
       {/* ── Header ── */}
@@ -173,12 +207,13 @@ export default function Dashboard({ live }) {
             fontFamily: 'var(--font-mono)', fontSize: '.72rem',
             color: 'var(--muted)', marginTop: '.35rem', letterSpacing: '.06em',
           }}>
-            Real-time tank telemetry · auto-refresh 2s
+            Real-time tank telemetry · auto-refresh 3s
           </p>
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: '.5rem', alignItems: 'center' }}>
           <StateChip state={state} />
-          {lastAno && <Badge type="danger">⚠ ANOMALY ACTIVE</Badge>}
+          {lastAno && <Badge type="danger">⚠ {lastAno.anomaly_class?.replace(/_/g,' ') || 'ANOMALY'}</Badge>}
+          {lastAno && <TierBadge tier={lastAno.conf_tier} />}
         </div>
       </div>
 
@@ -256,12 +291,15 @@ export default function Dashboard({ live }) {
           }} />
           <Stat
             label="Anomaly Status"
-            value={lastAno ? 'ALERT' : 'NORMAL'}
+            value={lastAno ? (lastAno.anomaly_class?.replace(/_/g,' ') || 'ALERT') : 'NORMAL'}
             color={lastAno ? 'var(--red)' : 'var(--green)'}
           />
-          <div style={{ marginTop: '.75rem' }}>
+          <div style={{ marginTop: '.75rem', display: 'flex', gap: '.4rem', flexWrap: 'wrap' }}>
             {lastAno
-              ? <Badge type="danger">MAD-Z: {lastAno.mad_z?.toFixed(2)}</Badge>
+              ? <>
+                  <Badge type="danger">{lastAno.n_agree || '?'}/3 detectors</Badge>
+                  <TierBadge tier={lastAno.conf_tier} />
+                </>
               : <Badge type="success">✓ All clear</Badge>}
           </div>
           <div style={{
@@ -272,6 +310,58 @@ export default function Dashboard({ live }) {
           </div>
         </Card>
       </div>
+
+      {/* ── Flow Analysis Row ── */}
+      <Card style={{ marginBottom: '1.25rem' }}>
+        <SectionTitle>FLOW ANALYSIS</SectionTitle>
+        <div style={{
+          display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)',
+          gap: '.75rem',
+        }}>
+          <div style={{ background: 'var(--surface2)', borderRadius: 8, padding: '.8rem 1rem' }}>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '.6rem', color: 'var(--muted)', letterSpacing: '.1em', textTransform: 'uppercase', marginBottom: '.3rem' }}>
+              Flow Rate
+            </div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '1.3rem', color: flowDir === 'draining' ? 'var(--red)' : flowDir === 'filling' ? 'var(--green)' : 'var(--muted)' }}>
+              {flowRate.toFixed(3)}
+            </div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '.6rem', color: 'var(--muted)' }}>mm/sample</div>
+          </div>
+          <div style={{ background: 'var(--surface2)', borderRadius: 8, padding: '.8rem 1rem' }}>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '.6rem', color: 'var(--muted)', letterSpacing: '.1em', textTransform: 'uppercase', marginBottom: '.3rem' }}>
+              Direction
+            </div>
+            <FlowBadge direction={flowDir} />
+          </div>
+          <div style={{ background: 'var(--surface2)', borderRadius: 8, padding: '.8rem 1rem' }}>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '.6rem', color: 'var(--muted)', letterSpacing: '.1em', textTransform: 'uppercase', marginBottom: '.3rem' }}>
+              Time to Empty
+            </div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '1.1rem', color: 'var(--text)' }}>
+              {tte || '—'}
+            </div>
+          </div>
+          <div style={{ background: 'var(--surface2)', borderRadius: 8, padding: '.8rem 1rem' }}>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '.6rem', color: 'var(--muted)', letterSpacing: '.1em', textTransform: 'uppercase', marginBottom: '.3rem' }}>
+              Time to Full
+            </div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '1.1rem', color: 'var(--text)' }}>
+              {ttf || '—'}
+            </div>
+          </div>
+          <div style={{ background: 'var(--surface2)', borderRadius: 8, padding: '.8rem 1rem' }}>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '.6rem', color: 'var(--muted)', letterSpacing: '.1em', textTransform: 'uppercase', marginBottom: '.3rem' }}>
+              Trend
+            </div>
+            <div style={{
+              fontFamily: 'var(--font-mono)', fontSize: '1rem',
+              color: flowTrend === 'accelerating' ? 'var(--red)' : flowTrend === 'decelerating' ? 'var(--green)' : 'var(--muted)',
+            }}>
+              {flowTrend}
+            </div>
+          </div>
+        </div>
+      </Card>
 
       {/* ── Live chart ── */}
       <Card style={{ marginBottom: '1.25rem' }}>
@@ -315,7 +405,7 @@ export default function Dashboard({ live }) {
         {/* Insights + alerts */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           <Card>
-            <SectionTitle>AI INSIGHTS</SectionTitle>
+            <SectionTitle>INSIGHTS</SectionTitle>
             {insights.length === 0
               ? <p style={{ color: 'var(--muted)', fontFamily: 'var(--font-mono)', fontSize: '.75rem' }}>
                   Waiting for analysis…
@@ -349,6 +439,9 @@ export default function Dashboard({ live }) {
                   fontFamily: 'var(--font-mono)', fontSize: '.7rem',
                 }}>
                   <span style={{ color: 'var(--muted)' }}>{a.date?.slice(0, 16) || '—'}</span>
+                  <span style={{ color: 'var(--amber)', marginLeft: '.5rem' }}>
+                    {a.anomaly_class?.replace(/_/g, ' ') || '—'}
+                  </span>
                   <span style={{ color: 'var(--red)' }}>{a.value?.toFixed(1)} mm</span>
                 </div>
               ))}

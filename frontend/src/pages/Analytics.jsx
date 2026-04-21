@@ -4,7 +4,7 @@ import {
   ResponsiveContainer, ReferenceLine, ComposedChart, Area,
 } from 'recharts';
 import { Card, SectionTitle, Badge, Spinner } from '../components/ui';
-import { getAnalysis, getForecast } from '../services/api';
+import { getAnalysis } from '../services/api';
 import { format, parseISO } from 'date-fns';
 
 /* ── Helpers ──────────────────────────────────────────────────────────────── */
@@ -52,7 +52,7 @@ function PageHeader({ onRefresh, loading }) {
           fontFamily: 'var(--font-mono)', fontSize: '.72rem',
           color: 'var(--muted)', marginTop: '.35rem', letterSpacing: '.06em',
         }}>
-          STL decomposition · Prophet forecasting · Adaptive anomaly markers
+          STL decomposition · MAD + RoC + Adaptive CUSUM · 3-method voting
         </p>
       </div>
       <button
@@ -97,20 +97,14 @@ function MiniStat({ label, value, color }) {
 /* ── Main Analytics ───────────────────────────────────────────────────────── */
 export default function Analytics() {
   const [analysis, setAna]    = useState(null);
-  const [forecast, setFc]     = useState(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab]         = useState('stl');   // 'stl' | 'forecast' | 'anomaly'
+  const [tab, setTab]         = useState('stl');   // 'stl' | 'anomaly'
 
   const load = useCallback(() => {
     setLoading(true);
-    Promise.all([
-      getAnalysis().catch(() => null),
-      getForecast().catch(() => null),
-    ]).then(([a, f]) => {
-      setAna(a);
-      setFc(f);
-      setLoading(false);
-    });
+    getAnalysis()
+      .then(a => { setAna(a); setLoading(false); })
+      .catch(() => setLoading(false));
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -133,35 +127,7 @@ export default function Analytics() {
       )
     : [];
 
-  const histData = downsample(
-    (forecast?.history?.ds || []).map((d, i) => ({
-      date:  shortDate(d),
-      yhat:  +forecast.history.yhat[i].toFixed(2),
-      lower: +forecast.history.yhat_lower[i].toFixed(2),
-      upper: +forecast.history.yhat_upper[i].toFixed(2),
-    })),
-    200
-  );
-
-  const fcData = downsample(
-    (forecast?.forecast?.ds || []).map((d, i) => ({
-      date:  shortDate(d),
-      yhat:  +forecast.forecast.yhat[i].toFixed(2),
-      lower: +forecast.forecast.yhat_lower[i].toFixed(2),
-      upper: +forecast.forecast.yhat_upper[i].toFixed(2),
-    })),
-    120
-  );
-
-  const trendData = downsample(
-    (forecast?.trend?.ds || []).map((d, i) => ({
-      date:  shortDate(d),
-      trend: +forecast.trend.trend[i].toFixed(2),
-    })),
-    250
-  );
-
-  const insights = forecast?.insights || analysis?.insights || [];
+  const insights = analysis?.insights || [];
   const anomalies = analysis?.anomalies || [];
 
   /* ── STL stats ── */
@@ -174,11 +140,17 @@ export default function Analytics() {
       : '—'),
   } : null;
 
+  /* ── Anomaly class breakdown ── */
+  const classCounts = {};
+  anomalies.forEach(a => {
+    const cls = a.anomaly_class || 'unclassified';
+    classCounts[cls] = (classCounts[cls] || 0) + 1;
+  });
+
   /* ── Tab nav ── */
   const tabs = [
-    { id: 'stl',      label: 'STL Decomposition' },
-    { id: 'forecast', label: 'Prophet Forecast' },
-    { id: 'anomaly',  label: 'Anomaly Analysis' },
+    { id: 'stl',     label: 'STL Decomposition' },
+    { id: 'anomaly', label: 'Anomaly Analysis' },
   ];
 
   const tabStyle = (id) => ({
@@ -377,92 +349,7 @@ export default function Analytics() {
       )}
 
       {/* ═══════════════════════════════════════════════════════════════════ */}
-      {/* TAB 2: Prophet Forecast                                            */}
-      {/* ═══════════════════════════════════════════════════════════════════ */}
-      {!loading && tab === 'forecast' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-
-          {/* History + Forecast combined */}
-          <Card>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '.75rem', marginBottom: '.75rem', flexWrap: 'wrap' }}>
-              <SectionTitle>PROPHET FORECAST — 24h HORIZON</SectionTitle>
-              <div style={{ marginLeft: 'auto', display: 'flex', gap: '.4rem', flexWrap: 'wrap' }}>
-                <Badge type="info">Cyan = Historical fit</Badge>
-                <Badge type="warning">Amber dashed = Forecast</Badge>
-              </div>
-            </div>
-            {(histData.length === 0 && fcData.length === 0) ? <Spinner /> : (
-              <ResponsiveContainer width="100%" height={300}>
-                <ComposedChart margin={{ top: 8, right: 24, bottom: 4, left: 0 }}>
-                  <defs>
-                    <linearGradient id="histBand" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%"   stopColor="var(--cyan)" stopOpacity={0.15} />
-                      <stop offset="100%" stopColor="var(--cyan)" stopOpacity={0.02} />
-                    </linearGradient>
-                    <linearGradient id="fcBand" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%"   stopColor="var(--amber)" stopOpacity={0.18} />
-                      <stop offset="100%" stopColor="var(--amber)" stopOpacity={0.03} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid stroke="var(--border)" strokeDasharray="4 4" />
-                  <XAxis
-                    dataKey="date" type="category" allowDuplicatedCategory={false}
-                    tick={{ fontFamily: 'var(--font-mono)', fontSize: 9, fill: 'var(--muted)' }}
-                    interval={25}
-                  />
-                  <YAxis tick={{ fontFamily: 'var(--font-mono)', fontSize: 9, fill: 'var(--muted)' }} />
-                  <Tooltip content={<ChartTip />} />
-
-                  {/* Historical CI band */}
-                  <Area data={histData} type="monotone" dataKey="upper" name="CI upper"
-                    stroke="none" fill="url(#histBand)" />
-                  <Area data={histData} type="monotone" dataKey="lower" name="CI lower"
-                    stroke="none" fill="var(--bg)" />
-                  <Line data={histData} type="monotone" dataKey="yhat" name="History"
-                    stroke="var(--cyan)" strokeWidth={2} dot={false} />
-
-                  {/* Forecast CI band */}
-                  <Area data={fcData} type="monotone" dataKey="upper" name="Fc upper"
-                    stroke="none" fill="url(#fcBand)" />
-                  <Area data={fcData} type="monotone" dataKey="lower" name="Fc lower"
-                    stroke="none" fill="var(--bg)" />
-                  <Line data={fcData} type="monotone" dataKey="yhat" name="Forecast"
-                    stroke="var(--amber)" strokeWidth={2.5} strokeDasharray="7 4" dot={false} />
-                </ComposedChart>
-              </ResponsiveContainer>
-            )}
-          </Card>
-
-          {/* Weekly trend */}
-          <Card>
-            <SectionTitle>WEEKLY TREND COMPONENT</SectionTitle>
-            {trendData.length === 0 ? <Spinner /> : (
-              <ResponsiveContainer width="100%" height={220}>
-                <ComposedChart data={trendData} margin={{ top: 8, right: 24, bottom: 4, left: 0 }}>
-                  <defs>
-                    <linearGradient id="trendFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%"   stopColor="var(--green)" stopOpacity={0.2} />
-                      <stop offset="100%" stopColor="var(--green)" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid stroke="var(--border)" strokeDasharray="4 4" />
-                  <XAxis dataKey="date"
-                    tick={{ fontFamily: 'var(--font-mono)', fontSize: 9, fill: 'var(--muted)' }}
-                    interval={Math.max(1, Math.floor(trendData.length / 10))}
-                  />
-                  <YAxis tick={{ fontFamily: 'var(--font-mono)', fontSize: 9, fill: 'var(--muted)' }} />
-                  <Tooltip content={<ChartTip />} />
-                  <Area type="monotone" dataKey="trend" name="Trend"
-                    stroke="var(--green)" fill="url(#trendFill)" strokeWidth={2.5} dot={false} />
-                </ComposedChart>
-              </ResponsiveContainer>
-            )}
-          </Card>
-        </div>
-      )}
-
-      {/* ═══════════════════════════════════════════════════════════════════ */}
-      {/* TAB 3: Anomaly Analysis                                            */}
+      {/* TAB 2: Anomaly Analysis                                            */}
       {/* ═══════════════════════════════════════════════════════════════════ */}
       {!loading && tab === 'anomaly' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -493,11 +380,35 @@ export default function Analytics() {
               </div>
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: '.85rem',
                             color: 'var(--text)', lineHeight: 1.8 }}>
-                <div>▸ STL Residual MAD</div>
-                <div>▸ Adaptive CUSUM</div>
-                <div>▸ Hybrid (MAD OR CUSUM)</div>
+                <div>▸ STL Residual MAD (point)</div>
+                <div>▸ RoC Threshold ±2.0 (contextual)</div>
+                <div>▸ Adaptive CUSUM (collective)</div>
+                <div>▸ Voting: n_agree / 3</div>
+                <div>▸ Alert suppression (5-hit)</div>
               </div>
             </Card>
+
+            {/* Class breakdown */}
+            <Card style={{ flex: '1 1 200px' }}>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: '.62rem',
+                            color: 'var(--muted)', letterSpacing: '.1em',
+                            textTransform: 'uppercase', marginBottom: '.5rem' }}>
+                Classification Breakdown
+              </div>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: '.8rem', lineHeight: 2 }}>
+                {Object.keys(classCounts).length === 0
+                  ? <span style={{ color: 'var(--green)' }}>No anomalies</span>
+                  : Object.entries(classCounts).map(([cls, cnt]) => (
+                    <div key={cls}>
+                      <span style={{ color: 'var(--amber)' }}>{cls.replace(/_/g, ' ')}</span>
+                      {': '}
+                      <span style={{ color: 'var(--red)' }}>{cnt}</span>
+                    </div>
+                  ))
+                }
+              </div>
+            </Card>
+
             {stlStats && (
               <Card style={{ flex: '1 1 200px' }}>
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: '.62rem',
@@ -523,7 +434,7 @@ export default function Analytics() {
                               fontFamily: 'var(--font-mono)', fontSize: '.72rem' }}>
                 <thead style={{ position: 'sticky', top: 0, background: 'var(--surface)' }}>
                   <tr>
-                    {['#', 'Timestamp', 'Distance (mm)'].map(h => (
+                    {['#', 'Timestamp', 'Distance (mm)', 'Class', 'Tier', 'Detectors', 'MAD-Z'].map(h => (
                       <th key={h} style={{
                         textAlign: 'left', padding: '.5rem .7rem',
                         color: 'var(--muted)', fontWeight: 400,
@@ -538,7 +449,7 @@ export default function Analytics() {
                 <tbody>
                   {anomalies.length === 0 ? (
                     <tr>
-                      <td colSpan={3} style={{ padding: '1.5rem .7rem', color: 'var(--muted)', textAlign: 'center' }}>
+                      <td colSpan={7} style={{ padding: '1.5rem .7rem', color: 'var(--muted)', textAlign: 'center' }}>
                         No anomalies detected
                       </td>
                     </tr>
@@ -553,6 +464,25 @@ export default function Analytics() {
                       </td>
                       <td style={{ padding: '.45rem .7rem', color: 'var(--red)' }}>
                         {a.value?.toFixed(2)}
+                      </td>
+                      <td style={{ padding: '.45rem .7rem', color: 'var(--cyan)' }}>
+                        {a.anomaly_class?.replace(/_/g, ' ') || '—'}
+                      </td>
+                      <td style={{ padding: '.45rem .7rem' }}>
+                        <span style={{
+                          color: a.conf_tier === 'critical' ? 'var(--red)' :
+                                 a.conf_tier === 'alert' ? 'var(--amber)' :
+                                 'var(--muted)',
+                          fontWeight: a.conf_tier === 'critical' ? 600 : 400,
+                        }}>
+                          {a.conf_tier?.toUpperCase() || '—'}
+                        </span>
+                      </td>
+                      <td style={{ padding: '.45rem .7rem', color: 'var(--text)' }}>
+                        {a.n_agree || '—'}/3
+                      </td>
+                      <td style={{ padding: '.45rem .7rem', color: 'var(--text)' }}>
+                        {a.mad_z?.toFixed(2) || '—'}
                       </td>
                     </tr>
                   ))}

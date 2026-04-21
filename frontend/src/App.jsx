@@ -1,21 +1,14 @@
 import React, { useState } from 'react';
 import Analytics from './pages/Analytics';
 import Dashboard from './pages/Dashboard';
-
-// Mocking "live" data for Dashboard
-const mockLive = {
-  water_level_pct: 65,
-  distance_mm: 84.5,
-  roc: { state: 'Stable', roc: 0.002, noise_floor: 0.001 },
-  last_anomaly: false
-};
+import Report from './pages/Report';
 
 function App() {
   const [page, setPage] = useState('dashboard');
 
   return (
     <div id="root">
-      {/* Updated Navigation with specific UI classes */}
+      {/* Navigation */}
       <nav className="nav-container">
         <button 
           className={`nav-button ${page === 'dashboard' ? 'active' : ''}`}
@@ -29,15 +22,19 @@ function App() {
         >
           Deep Analytics
         </button>
+        <button 
+          className={`nav-button ${page === 'report' ? 'active' : ''}`}
+          onClick={() => setPage('report')}
+        >
+          Report
+        </button>
       </nav>
 
       {/* Main Content Area */}
       <main>
-        {page === 'dashboard' ? (
-          <Dashboard live={mockLive} />
-        ) : (
-          <Analytics />
-        )}
+        {page === 'dashboard' && <Dashboard />}
+        {page === 'analytics' && <Analytics />}
+        {page === 'report'    && <Report />}
       </main>
     </div>
   );

@@ -32,16 +32,18 @@ def main():
     # Find CSV relative to this script or in parent data dir
     script_dir = os.path.dirname(os.path.abspath(__file__))
     csv_candidates = [
+        os.path.join(script_dir, "..", "data", "Thursday_Tuesday.csv"),
+        os.path.join(script_dir, "Thursday_Tuesday.csv"),
         os.path.join(script_dir, "..", "data", "CleanedFinalDataset.csv"),
-        os.path.join(script_dir, "CleanedFinalDataset.csv"),
     ]
     csv_path = next((p for p in csv_candidates if os.path.exists(p)), None)
     if not csv_path:
-        print("ERROR: CleanedFinalDataset.csv not found.")
+        print("ERROR: Dataset CSV not found.")
         sys.exit(1)
 
     df = pd.read_csv(csv_path)
-    df = df.rename(columns={"ds": "timestamp", "y": "distance"})
+    # Support both old Prophet format (ds, y) and new raw format (timestamp, distance_mm)
+    df = df.rename(columns={"ds": "timestamp", "y": "distance", "distance_mm": "distance"})
     df["timestamp"] = pd.to_datetime(df["timestamp"])
     df = df[["timestamp", "distance"]].dropna().sort_values("timestamp").reset_index(drop=True)
 
