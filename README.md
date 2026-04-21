@@ -1,65 +1,176 @@
-# IoT Tank Monitor Anomaly Detection Pipeline
+# 🛢 IoT Liquid Tank Monitoring with Anomaly Detection
 
-This repository hosts a robust, production-ready IoT Tank Monitoring Dashboard and Anomaly Detection backend designed for precision water level telemetry. 
+A comprehensive IoT-based anomaly detection framework for liquid tank monitoring using HC-SR04 ultrasonic sensor, ESP32 microcontroller, and a robust 3-detector ensemble pipeline acting on STL-decomposed residuals.
 
-## 🏗 System Architecture
+## 🏗 Architecture
 
-The architecture spans a modular Flask (Python) backend for mathematical analysis and a Vite (React) front-end built natively with CSS glassmorphism aesthetics.
+```mermaid
+graph TD
+    subgraph "Tier 1: Sensing (Edge)"
+        A["📶 HC-SR04 Sensor"] -->|"Distance (mm)"| B["⚡ ESP32"]
+    end
+  
+    subgraph "Tier 2: Edge Server (Flask)"
+        B -->|"HTTP POST /collect"| C["🌐 Flask API"]
+        C --> D["🧠 3-Detector Ensemble"]
+        D -->|"MAD | RoC | CUSUM"| D
+        D --> E[("💽 SQLite Database (Live)")]
+    end
+  
+    subgraph "Tier 3: UI (React/Vite)"
+        E --> G["💻 Glassmorphism Web Dashboard"]
+        E --> H["📊 Real-Time Report"]
+    end
+```
 
-### Key Dimensions (Configurable)
-- **Tank Full Capacity (100%)**: `35.0 mm` distance from the sensor
-- **Tank Empty Capacity (0%)**: `395.0 mm` distance from the sensor
+**Three-Tier System:**
 
----
+- **Tier 1 (Sensing):** HC-SR04 + ESP32 emitting real-time proximity pings.
+- **Tier 2 (Edge Server):** Flask backend evaluating residuals via median absolute deviations, contextual thresholds, and adaptive logic.
+- **Tier 3 (Visualization):** React/Vite web application providing real-time flow summary, dynamic charting, and statistical reporting.
 
-## 🧠 Diagnostic Pipeline
+## 🔍 In-Depth System Architecture
 
-We utilize an academically grounded, deterministic statistical model optimized for IoT sensor dynamics (specifically addressing characteristic HC-SR04 ultrasonic sensor glitches), completely eliminating the need for circular, high-latency libraries like Prophet.
+```mermaid
+graph LR
+    %% Hardware Tier
+    subgraph ESP32["Sensing Hardware"]
+        direction TB
+        HC["HC-SR04"] --> MCU["ESP32 Microcontroller"]
+        MCU --> WiFi["WiFi / HTTP POST"]
+    end
 
-### Step 1: STL Decomposition
-Raw data is processed using **Seasonal-Trend Decomposition using Loess (STL)**. 
-- Prevents false-anomalies caused by cyclic daily usage.
-- Detection algorithms execute exclusively on the **residual signal** (de-trended and de-seasonalized).
+    %% Python Backend Tier
+    subgraph Server["Backend Server (Python/Flask)"]
+        direction TB
+        Route["POST /collect"] --> Buffer["300-point Rolling Buffer"]
+      
+        %% Ensemble Engine
+        subgraph Ensemble["Live Diagnosis Engine"]
+            Buffer --> STL["STL Decomposition (Startup)"]
+            STL -.-> Residual["Residual Signal"]
+            Residual --> MAD["1. MAD (Spikes)"]
+            Residual --> ROC["2. RoC (Rapid Drain/Refill)"]
+            Residual --> CUSUM["3. Adaptive CUSUM (Leaks)"]
+            MAD --> Voting["Consensus & Taxonomy Layer"]
+            ROC --> Voting
+            CUSUM --> Voting
+        end
+      
+        Voting --> Flow["Flow/Usage Calculator"]
+      
+        %% Database
+        subgraph DB["SQLite Database"]
+            LiveDb[("live_sensor.db")]
+        end
+      
+        Flow --> DB
+    end
 
-### Step 2: Hybrid Detection (3-Method Voting)
-We employ three distinct mathematical bounds, covering all physical failure geometries. 
+    %% Client Tier
+    subgraph Client["React Dashboard (Vite)"]
+        direction TB
+        Fetch["Polling (GET /latest)"] --> DOM["Virtual DOM Elements"]
+        DOM --> Charts["Recharts Renderers"]
+        DOM --> Log["Anomaly Data Table & Badges"]
+    end
 
-1. **MAD (Median Absolute Deviation)**
-    - *Purpose*: Point anomalies.
-    - *Mechanism*: Extracts the median of variations and applies an adaptive 99.5th-percentile threshold. Highly robust against infinite sensor spikes (unlike MA+SD which suffers from anomaly masking).
-2. **Rate-of-Change (RoC)**
-    - *Purpose*: Contextual anomalies.
-    - *Mechanism*: Catches aggressive, sudden draining outside the physical constraints of baseline plumbing (Draining > 2.0 mm/sample).
-3. **Adaptive CUSUM**
-    - *Purpose*: Collective anomalies.
-    - *Mechanism*: Accumulates progressive, minute deviations over time to catch gradual drifts and slow-leaks entirely undetectable to MAD or typical thresholds.
+    %% Connections
+    WiFi == "JSON Payload" ==> Route
+    Fetch == "JSON State" ==> DB
+```
 
-### Step 3: Formal Classification Taxonomy
-Anomalies trigger a voting consensus (n_agree / 3) and map directly to formal topologies defined by **Chandola et al. (2009)**:
+## 🔄 User Flow & Data Lifecycle
 
-- `sensor_spike`: Immediate isolated reading failure.
-- `sensor_freeze`: Output stagnates artificially.
-- `overflow`: Proximity encroaches dangerous boundary.
-- `sudden_drain_theft`: Accelerated unexpected drainage.
-- `slow_leak`: Gradual progressive liquid depletion.
-- *Note:* Intentional refills are dynamically parsed (via negative RoC) and downgraded to "Log" priority, suppressing them from triggering UI alerts since they reflect expected operations.
+```mermaid
+sequenceDiagram
+    participant E as ESP32 Sensor
+    participant F as Flask Backend
+    participant D as SQLite DB
+    participant U as React Dashboard
+  
+    loop Every ~20 seconds
+        E->>F: POST /collect {"distance_mm": 42.5}
+        F->>F: Extract Residual
+        F->>F: Execute MAD, RoC (>2.0mm), CUSUM
+        F->>F: Vote & Suppress (Classify Chandola Taxonomy)
+        F->>D: INSERT INTO live_readings
+        F-->>E: JSON 200 OK
+    end
+  
+    loop Every 2 seconds
+        U->>F: GET /latest
+        F->>D: Fetch buffer and anomaly states
+        F-->>U: JSON (water_level_pct, flow, last_anomaly)
+        U->>U: Hot-reload React visual components
+    end
+```
 
----
+## 🎯 Physical Calibration (Hardcoded Defaults)
 
-## 🚀 Running The Application
+- **Tank Full Capacity (100%)**: `35.0 mm` boundary from sensor.
+- **Tank Empty Limit (0%)**: `395.0 mm` boundary from sensor.
+- **Overflow Trigger**: `< 35.0 mm`
 
-### Backend (Flask)
+## 📊 Detection Methods
+
+| Method                      | Target Anomaly   | Mechanism | Severity/Alert |
+| --------------------------- | ---------------- | --------- | ------------- |
+| MAD (Median Absolute Dev)   | Point Spikes     | Robust threshold against extreme math noise | Critical |
+| RoC (Rate of Change)        | Drains / Theft   | Failsafe threshold bounds `±2.0mm/s` | Alert |
+| RoC (Negative Limit)        | Refill Events    | Physical override mapping to Normal Op | Log |
+| Adaptive CUSUM              | Slow Leaks       | Tracks progressive cumulative slip | Alert |
+| **Hybrid (3-method)** | **Voting Consensus** | **n_agree / 3 determines tier** | **Dynamic** |
+
+## 🚀 Quick Start
+
+### 1. Start the Flask Backend
+
 ```bash
 cd backend
 pip install -r requirements.txt
 python app.py
 ```
-*(Runs on localhost:5001. The simulator script `simulator/replay.py` streams dataset rows actively to `/collect`)*
+*Note: `app.py` runs on port `5001`. The `backend/simulator/replay.py` can be used to stream the included `Thursday_Tuesday.csv` directly into the `/collect` endpoint to visualize data locally.*
 
-### Frontend (React)
+### 2. Start the React Frontend
+
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
-*(Runs on localhost:5173. Dynamically polls the backend for sub-second visual updates)*
+*Note: Runs on port `5173`. Opens to a live dashboard rendering sensor streams mapped to the mathematical pipeline.*
+
+## 📁 Project Structure
+
+```text
+tank_monitor_cloned/
+├── backend/
+│   ├── app.py                   # Main Flask API / Routing
+│   ├── data/                    # Thursday_Tuesday.csv & SQLite local instance
+│   ├── services/
+│   │   ├── analysis.py          # Master aggregator + pipeline initialization
+│   │   ├── anomaly.py           # MAD, CUSUM, Chandola Taxonomy Logic
+│   │   ├── flow.py              # Time-to-Empty / Flow Rate logic
+│   │   ├── roc.py               # Rate of change sliding window
+│   │   └── stl.py               # Time-series decomposition
+│   └── simulator/               # Synthetic event streaming
+│       └── replay.py
+├── frontend/
+│   ├── src/
+│   │   ├── components/          # Reusable Glassmorphism UI
+│   │   ├── pages/
+│   │   │   ├── Dashboard.jsx    # Real-time operations window
+│   │   │   ├── Analytics.jsx    # Historical chart views
+│   │   │   └── Report.jsx       # Read-only live statistical review
+│   │   └── services/            # Axios API config
+│   ├── package.json
+│   └── vite.config.js           # Native build tooling
+└── README.md
+```
+
+## 📈 Methodology Notes
+
+- **Refill Logic Handling:** Standard `refill_events` mapped to negative RoC bursts are parsed correctly but are specifically downgraded to the `Log` severity tier. They automatically trigger an accelerated suppression circuit (2 hits instead of 5), recognizing massive level shifts natively as "Normal Application Operation", protecting against alert fatigue.
+- **STL Application:** Detection is exclusively measured on mathematical **Residuals** rather than raw values, naturally eliminating daily water usage cycles that trigger false-positives in simpler moving average/standard-deviation models.
