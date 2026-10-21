@@ -127,8 +127,14 @@ def collect():
         return jsonify({"error": "invalid distance"}), 400
 
     ts = datetime.now().isoformat()
-    
-    # NEW: Save every live reading to the SQLite database
+
+    # Thread-safe snapshot of buffer + detector
+    with _lock:
+        _buffer.append({"timestamp": ts, "distance": distance})
+        buf_copy = list(_buffer)
+        detector = _cache["detector"]
+
+    # Save every live reading to the SQLite database
     conn = sqlite3.connect(DB_PATH)
     conn.execute("INSERT INTO live_readings (timestamp, distance) VALUES (?, ?)", (ts, distance))
     conn.commit()
